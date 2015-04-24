@@ -533,13 +533,14 @@ function send_to_os(dest,type) {
     dest = dest.replace("pw=","pw="+encodeURIComponent(curr_pw));
     type = type || "text";
 
-    var obj = {
+    var queue = /\/(?:cv|cs|cr|cp|uwa|dp|co|cl|cu|up|cm)/.exec(dest) ? "change" : "default",
+        obj = {
             url: curr_prefix+curr_ip+dest,
             type: "GET",
             dataType: type,
             shouldRetry: function(xhr,current) {
                 if (xhr.status === 0 && xhr.statusText === "abort" || retryCount < current) {
-                    $.ajaxq.abort("default");
+                    $.ajaxq.abort(queue);
                     return false;
                 }
                 return true;
@@ -559,7 +560,7 @@ function send_to_os(dest,type) {
         });
     }
 
-    defer = $.ajaxq("default",obj).then(
+    defer = $.ajaxq(queue,obj).then(
         function(data){
             // In case the data type was incorrect, attempt to fix. If fix not possible, return string
             if (typeof data === "string") {
@@ -707,7 +708,7 @@ function newload() {
             }
 
             // Check if the OpenSprinkler can be accessed from the public IP
-            if (typeof controller.settings.eip === "number") {
+            if (!curr_local && typeof controller.settings.eip === "number") {
                 checkPublicAccess(controller.settings.eip);
             }
 
@@ -862,13 +863,13 @@ function update_controller_options(callback) {
                 vars.ext--;
                 vars.fwv = "1.8.3-ospi";
             } else {
-                var keyIndex = {1:"tz",2:"ntp",12:"hp0",13:"hp1",14:"ar",15:"ext",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtof",21:"urs",22:"rso",23:"wl",25:"ipas",26:"devid",36:"lg"};
+                var keyIndex = {1:"tz",2:"ntp",12:"hp0",13:"hp1",14:"ar",15:"ext",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtof",21:"urs",22:"rso",23:"wl",25:"ipas",26:"devid"};
                 tmp = /var opts=\[(.*)\];/.exec(options);
                 tmp = tmp[1].replace(/"/g,"").split(",");
 
                 for (i=0; i<tmp.length-1; i=i+4) {
                     o = +tmp[i+3];
-                    if ($.inArray(o,[1,2,12,13,14,15,16,17,18,19,20,21,22,23,25,26,36]) !== -1) {
+                    if ($.inArray(o,[1,2,12,13,14,15,16,17,18,19,20,21,22,23,25,26]) !== -1) {
                         vars[keyIndex[o]] = +tmp[i+2];
                     }
                 }
@@ -2248,12 +2249,12 @@ function update_wunderground_weather(wapikey) {
                     "precip_today_in": data.current_observation.precip_today_in,
                     "precip_today_metric": data.current_observation.precip_today_metric
                 },
-                "location": data.current_observation.observation_location.full,
+                "location": data.current_observation.display_location.full,
                 "region": data.current_observation.display_location.country_iso3166,
                 simpleforecast: {}
             };
 
-            currentCoordinates = [data.current_observation.display_location.latitude, data.current_observation.display_location.longitude];
+            currentCoordinates = [data.current_observation.observation_location.latitude, data.current_observation.observation_location.longitude];
 
             $.each(data.forecast.simpleforecast.forecastday,function(k,attr) {
                  ww_forecast.simpleforecast[k] = attr;
@@ -2269,15 +2270,76 @@ function update_wunderground_weather(wapikey) {
                 title: ww_forecast.condition.text,
                 code: code,
                 temp: temp,
-                location: ww_forecast.location,
                 forecast: ww_forecast,
                 source: "wunderground"
             };
 
-            updateWeatherBox();
+            coordsToLocation(currentCoordinates[0],currentCoordinates[1],function(result){
+                weather.location = result;
+                updateWeatherBox();
+            },ww_forecast.location);
 
             $.mobile.document.trigger("weatherUpdateComplete");
         }
+    });
+}
+
+function coordsToLocation(lat,lon,callback,fallback) {
+    $.getJSON("https://maps.googleapis.com/maps/api/geocode/json?latlng="+lat+","+lon,function(data){
+        if (data.results.length === 0) {
+            callback(fallback);
+        }
+
+        data = data.results;
+
+        var hasEnd = false;
+
+        for (var item in data) {
+            if (data.hasOwnProperty(item)) {
+                if ($.inArray("locality",data[item].types) > -1 || $.inArray("sublocality",data[item].types) > -1) {
+                    hasEnd = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasEnd === false) {
+            callback(fallback);
+        }
+
+        data = data[item].address_components;
+
+        var location = "",
+            country = "";
+
+        hasEnd = false;
+
+        for (item in data) {
+            if (data.hasOwnProperty(item) && !hasEnd) {
+                if (location === "" && $.inArray("locality",data[item].types) > -1) {
+                    location = data[item].long_name + ", " + location;
+                }
+
+                if (location === "" && $.inArray("sublocality",data[item].types) > -1) {
+                    location = data[item].long_name + ", " + location;
+                }
+
+                if ($.inArray("administrative_area_level_1",data[item].types) > -1) {
+                    location += data[item].long_name;
+                    hasEnd = true;
+                }
+
+                if ($.inArray("country",data[item].types) > -1) {
+                    country = data[item].long_name;
+                }
+            }
+        }
+
+        if (!hasEnd) {
+            location += country;
+        }
+
+        callback(location);
     });
 }
 
@@ -2347,7 +2409,7 @@ function make_wunderground_forecast() {
         precip = weather.forecast.condition.precip_today_metric+" mm";
     }
 
-    var list = "<li data-role='list-divider' data-theme='a' class='center'>"+weather.forecast.location+"</li>";
+    var list = "<li data-role='list-divider' data-theme='a' class='center'>"+weather.location+"</li>";
     list += "<li data-icon='false' class='center'><div>"+_("Now")+"</div><br><div title='"+weather.forecast.condition.text+"' class='wicon cond"+weather.forecast.condition.code+"'></div><span>"+temp+"</span><br><span>"+_("Sunrise")+"</span><span>: "+pad(parseInt(controller.settings.sunrise/60)%24)+":"+pad(controller.settings.sunrise%60)+"</span> <span>"+_("Sunset")+"</span><span>: "+pad(parseInt(controller.settings.sunset/60)%24)+":"+pad(controller.settings.sunset%60)+"</span><br><span>"+_("Precip")+"</span><span>: "+precip+"</span></li>";
     $.each(weather.forecast.simpleforecast, function(i) {
         if (i === "0") {
@@ -2480,7 +2542,7 @@ function nearbyPWS(lat,lon,callback) {
     }
 
     $.ajax({
-        url: "http://api.wunderground.com/api/"+controller.settings.wtkey+"/geolookup/q/"+(lat === -999 || lon === -999 ? "autoip" : encodeURIComponent(lat)+","+encodeURIComponent(lon))+".json",
+        url: "https://api.wunderground.com/api/"+controller.settings.wtkey+"/geolookup/q/"+(lat === -999 || lon === -999 ? "autoip" : encodeURIComponent(lat)+","+encodeURIComponent(lon))+".json",
         dataType: isChromeApp ? "json" : "jsonp",
         shouldRetry: retryCount
     }).done(function(data){
@@ -2584,7 +2646,7 @@ function debugWU() {
     $.mobile.loading("show");
 
     $.ajax({
-        url: "http://api.wunderground.com/api/"+controller.settings.wtkey+"/yesterday/conditions/q/"+controller.settings.loc+".json",
+        url: "https://api.wunderground.com/api/"+controller.settings.wtkey+"/yesterday/conditions/q/"+controller.settings.loc+".json",
         dataType: isChromeApp ? "json" : "jsonp",
         shouldRetry: retryCount
     }).done(function(data){
@@ -2850,13 +2912,13 @@ function show_options(expandItem) {
                 invalid = false,
                 isPi = isOSPi(),
                 button = header.eq(2),
-                keyNames = {1:"tz",2:"ntp",12:"htp",13:"htp2",14:"ar",15:"nbrd",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtoff",21:"urs",22:"rst",23:"wl",25:"ipas",30:"rlp",36:"lg",31:"uwt"},
+                keyNames = {1:"tz",2:"ntp",12:"htp",13:"htp2",14:"ar",15:"nbrd",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtoff",21:"urs",22:"rst",23:"wl",25:"ipas",30:"rlp",36:"lg",31:"uwt",37:"mas2",38:"mton2",39:"mtof2"},
                 key;
 
             button.prop("disabled",true);
             page.find(".submit").removeClass("hasChanges");
 
-            $("#os-options-list").find(":input,button").filter(":not(.noselect)").each(function(){
+            page.find("#os-options-list").find(":input,button").filter(":not(.noselect)").each(function(){
                 var $item = $(this),
                     id = $item.attr("id"),
                     data = $item.val(),
@@ -2941,6 +3003,13 @@ function show_options(expandItem) {
                         if (restrict.length) {
                             data = setRestriction(parseInt(restrict.val()),data);
                         }
+                        break;
+                    case "o18":
+                    case "o37":
+                        if (parseInt(data) > (parseInt(page.find("#o15").val())+1) * 8) {
+                            data = 0;
+                        }
+
                         break;
                     case "o2":
                     case "o14":
@@ -3044,22 +3113,43 @@ function show_options(expandItem) {
     list += "</fieldset><fieldset data-role='collapsible'"+(typeof expandItem === "string" && expandItem === "master" ? " data-collapsed='false'" : "")+"><legend>"+_("Configure Master")+"</legend>";
 
     if (typeof controller.options.mas !== "undefined") {
-        list += "<div class='ui-field-contain'><label for='o18' class='select'>"+_("Master Station")+"</label><select data-mini='true' id='o18'><option value='0'>"+_("None")+"</option>";
+        list += "<div class='ui-field-contain ui-field-no-border'><label for='o18' class='select'>"+_("Master Station")+" "+(typeof controller.options.mas2 !== "undefined" ? "1" : "")+"</label><select data-mini='true' id='o18'><option value='0'>"+_("None")+"</option>";
         for (i=0; i<controller.stations.snames.length; i++) {
-            list += "<option "+((isStationMaster(i)) ? "selected" : "")+" value='"+(i+1)+"'>"+controller.stations.snames[i]+"</option>";
-            if (i === 7) {
+            list += "<option "+((isStationMaster(i) === 1) ? "selected" : "")+" value='"+(i+1)+"'>"+controller.stations.snames[i]+"</option>";
+            if (!checkOSVersion(214) && i === 7) {
                 break;
             }
         }
         list += "</select></div>";
+
+        if (typeof controller.options.mton !== "undefined") {
+            list += "<div "+(controller.options.mas === 0 ? "style='display:none' ": "")+"class='ui-field-no-border ui-field-contain duration-field'><label for='o19'>"+_("Master On Delay")+"</label><button data-mini='true' id='o19' value='"+controller.options.mton+"'>"+controller.options.mton+"s</button></div>";
+        }
+
+        if (typeof controller.options.mtof !== "undefined") {
+            list += "<div "+(controller.options.mas === 0 ? "style='display:none' ": "")+"class='ui-field-no-border ui-field-contain duration-field'><label for='o20'>"+_("Master Off Delay")+"</label><button data-mini='true' id='o20' value='"+controller.options.mtof+"'>"+controller.options.mtof+"s</button></div>";
+        }
     }
 
-    if (typeof controller.options.mton !== "undefined") {
-        list += "<div class='ui-field-contain duration-field'><label for='o19'>"+_("Master On Delay")+"</label><button data-mini='true' id='o19' value='"+controller.options.mton+"'>"+controller.options.mton+"s</button></div>";
-    }
+    if (typeof controller.options.mas2 !== "undefined") {
+        list += "<hr style='width:95%' class='content-divider'>";
 
-    if (typeof controller.options.mtof !== "undefined") {
-        list += "<div class='ui-field-contain duration-field'><label for='o20'>"+_("Master Off Delay")+"</label><button data-mini='true' id='o20' value='"+controller.options.mtof+"'>"+controller.options.mtof+"s</button></div>";
+        list += "<div class='ui-field-contain ui-field-no-border'><label for='o37' class='select'>"+_("Master Station")+" 2</label><select data-mini='true' id='o37'><option value='0'>"+_("None")+"</option>";
+        for (i=0; i<controller.stations.snames.length; i++) {
+            list += "<option "+((isStationMaster(i) === 2) ? "selected" : "")+" value='"+(i+1)+"'>"+controller.stations.snames[i]+"</option>";
+            if (!checkOSVersion(214) && i === 7) {
+                break;
+            }
+        }
+        list += "</select></div>";
+
+        if (typeof controller.options.mton2 !== "undefined") {
+            list += "<div "+(controller.options.mas2 === 0 ? "style='display:none' ": "")+"class='ui-field-no-border ui-field-contain duration-field'><label for='o38'>"+_("Master On Delay")+"</label><button data-mini='true' id='o38' value='"+controller.options.mton2+"'>"+controller.options.mton2+"s</button></div>";
+        }
+
+        if (typeof controller.options.mtof2 !== "undefined") {
+            list += "<div "+(controller.options.mas2 === 0 ? "style='display:none' ": "")+"class='ui-field-no-border ui-field-contain duration-field'><label for='o39'>"+_("Master Off Delay")+"</label><button data-mini='true' id='o39' value='"+controller.options.mtof2+"'>"+controller.options.mtof2+"s</button></div>";
+        }
     }
 
     list += "</fieldset><fieldset data-role='collapsible'"+(typeof expandItem === "string" && expandItem === "station" ? " data-collapsed='false'" : "")+"><legend>"+_("Station Handling")+"</legend>";
@@ -3193,7 +3283,7 @@ function show_options(expandItem) {
 
         if (loc.val() === "") {
             loc.parent().removeClass("green");
-            $("#o1").selectmenu("enable");
+            page.find("#o1").selectmenu("enable");
         }
     });
 
@@ -3204,7 +3294,7 @@ function show_options(expandItem) {
             if (isOSPi()) {
                 co = "otz=32&ontp=1&onbrd=0&osdt=0&omas=0&omton=0&omtoff=0&orst=1&owl=100&orlp=0&ouwt=0&olg=1&oloc=Boston,MA";
             } else {
-                co = "o1=32&o2=1&o3=1&o12=80&o13=0&o15=0&o17=0&o18=0&o19=0&o20=0&o22=1&o23=100&o26=0&o30=0&o31=0&o32=50&o33=97&o34=210&o35=169&o36=1&loc=Boston,MA";
+                co = "o1=32&o2=1&o3=1&o12=80&o13=0&o15=0&o17=0&o18=0&o19=0&o20=0&o22=1&o23=100&o26=0&o30=0&o31=0&o32=50&o33=97&o34=210&o35=169&o36=1&o37=0&038=0&o39=0&loc=Boston,MA";
             }
 
             send_to_os("/co?pw=&"+co).done(function(){
@@ -3341,7 +3431,7 @@ function show_options(expandItem) {
     });
 
     page.find("#lookup-loc > button").on("click",function(){
-        var loc = $("#loc"),
+        var loc = page.find("#loc"),
             current = loc.val(),
             button = $(this);
 
@@ -3418,7 +3508,7 @@ function show_options(expandItem) {
                     dur.val(ip.join(".")).text(ip.join("."));
                 }
             });
-        } else if (id === "o19") {
+        } else if (id === "o19" || id === "o38") {
             showSingleDurationInput({
                 data: dur.val(),
                 title: name,
@@ -3440,7 +3530,7 @@ function show_options(expandItem) {
                 maximum: 2000,
                 helptext: helptext
             });
-        } else if (id === "o20") {
+        } else if (id === "o20" || id === "o39") {
             showSingleDurationInput({
                 data: dur.val(),
                 title: name,
@@ -3500,9 +3590,16 @@ function show_options(expandItem) {
         page.find("#ntp_addr").parents(".ui-field-contain").toggleClass("hidden",!ntp);
     });
 
+    page.find("#o18,#o37").on("change",function(){
+        page.find("#o19,#o20").parents(".ui-field-contain").toggle(parseInt(page.find("#o18").val()) === 0 ? false : true);
+        if (typeof controller.options.mas2 !== "undefined") {
+            page.find("#o38,#o39").parents(".ui-field-contain").toggle(parseInt(page.find("#o37").val()) === 0 ? false : true);
+        }
+    });
+
     page.find("#o31").on("change",function(){
         // Switch state of water level input based on weather algorithm status
-        $("#o23").prop("disabled",(parseInt(this.value) === 0 || page.find("#wtkey").val() === "" ? false : true));
+        page.find("#o23").prop("disabled",(parseInt(this.value) === 0 || page.find("#wtkey").val() === "" ? false : true));
     });
 
     page.find("#wtkey").on("change input",function(){
@@ -3512,10 +3609,10 @@ function show_options(expandItem) {
 
         // Switch state of weather algorithm input based on API key status
         if (this.value === "") {
-            $("#o31").val("0").selectmenu("refresh").selectmenu("disable");
-            $("#o23").prop("disabled",false);
+            page.find("#o31,#weatherRestriction").val("0").selectmenu("refresh").selectmenu("disable");
+            page.find("#o23").prop("disabled",false);
         } else {
-            $("#o31").selectmenu("enable");
+            page.find("#o31,#weatherRestriction").selectmenu("enable");
         }
     });
 
@@ -3672,6 +3769,7 @@ function showHome(firstLoad) {
 
             cards += "<span class='btn-no-border ui-btn "+((isStationMaster(i)) ? "ui-icon-master" : "ui-icon-gear")+" ui-btn-icon-notext station-settings' data-station='"+i+"' id='attrib-"+i+"' " +
                 (hasMaster ? ("data-um='"+((controller.stations.masop[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0)+"' ") : "") +
+                (hasMaster2 ? ("data-um2='"+((controller.stations.masop2[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0)+"' ") : "") +
                 (hasIR ? ("data-ir='"+((controller.stations.ignore_rain[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0)+"' ") : "") +
                 (hasAR ? ("data-ar='"+((controller.stations.act_relay[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0)+"' ") : "") +
                 (hasSD ? ("data-sd='"+((controller.stations.stn_dis[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0)+"' ") : "") +
@@ -3701,6 +3799,7 @@ function showHome(firstLoad) {
                 name = button.siblings("[id='station_"+id+"']"),
                 saveChanges = function(){
                     button.data("um", select.find("#um").is(":checked") ? 1 : 0 );
+                    button.data("um2", select.find("#um2").is(":checked") ? 1 : 0 );
                     button.data("ir", select.find("#ir").is(":checked") ? 1 : 0 );
                     button.data("ar", select.find("#ar").is(":checked") ? 1 : 0 );
                     button.data("sd", select.find("#sd").is(":checked") ? 1 : 0 );
@@ -3718,7 +3817,11 @@ function showHome(firstLoad) {
 
             if (!isStationMaster(id)) {
                 if (hasMaster) {
-                    select += "<label for='um'><input class='needsclick' data-iconpos='right' id='um' type='checkbox' "+((button.data("um") === 1) ? "checked='checked'" : "")+">"+_("Use Master")+"</label>";
+                    select += "<label for='um'><input class='needsclick' data-iconpos='right' id='um' type='checkbox' "+((button.data("um") === 1) ? "checked='checked'" : "")+">"+_("Use Master")+" "+(hasMaster2 ? "1" : "")+"</label>";
+                }
+
+                if (hasMaster2) {
+                    select += "<label for='um2'><input class='needsclick' data-iconpos='right' id='um2' type='checkbox' "+((button.data("um2") === 1) ? "checked='checked'" : "")+">"+_("Use Master")+" 2</label>";
                 }
 
                 if (hasIR) {
@@ -3757,6 +3860,7 @@ function showHome(firstLoad) {
         submit_stations = function() {
             var is208 = (checkOSVersion(208) === true),
                 master = {},
+                master2 = {},
                 sequential = {},
                 rain = {},
                 relay = {},
@@ -3767,6 +3871,9 @@ function showHome(firstLoad) {
             for(bid=0;bid<controller.settings.nbrd;bid++) {
                 if (hasMaster) {
                     master["m"+bid] = 0;
+                }
+                if (hasMaster2) {
+                    master2["n"+bid] = 0;
                 }
                 if (hasSequential) {
                     sequential["q"+bid] = 0;
@@ -3787,6 +3894,9 @@ function showHome(firstLoad) {
 
                     if (hasMaster) {
                         master["m"+bid] = (master["m"+bid]) + (attrib.data("um") << s);
+                    }
+                    if (hasMaster2) {
+                        master2["n"+bid] = (master2["n"+bid]) + (attrib.data("um2") << s);
                     }
                     if (hasSequential) {
                         sequential["q"+bid] = (sequential["q"+bid]) + (attrib.data("us") << s);
@@ -3811,7 +3921,7 @@ function showHome(firstLoad) {
             }
 
             $.mobile.loading("show");
-            send_to_os("/cs?pw=&"+$.param(names)+(hasMaster ? "&"+$.param(master) : "")+(hasSequential ? "&"+$.param(sequential) : "")+(hasIR ? "&"+$.param(rain) : "")+(hasAR ? "&"+$.param(relay) : "")+(hasSD ? "&"+$.param(disable) : "")).done(function(){
+            send_to_os("/cs?pw=&"+$.param(names)+(hasMaster ? "&"+$.param(master) : "")+(hasMaster2 ? "&"+$.param(master2) : "")+(hasSequential ? "&"+$.param(sequential) : "")+(hasIR ? "&"+$.param(rain) : "")+(hasAR ? "&"+$.param(relay) : "")+(hasSD ? "&"+$.param(disable) : "")).done(function(){
                 showerror(_("Stations have been updated"));
                 update_controller(function(){
                     $(".ui-page-active").trigger("datarefresh");
@@ -3876,6 +3986,7 @@ function showHome(firstLoad) {
             page.find(".sitename").text(site_select.val());
 
             hasMaster = controller.options.mas ? true : false;
+            hasMaster2 = controller.options.mas2 ? true : false;
             hasIR = (typeof controller.stations.ignore_rain === "object") ? true : false;
             hasAR = (typeof controller.stations.act_relay === "object") ? true : false;
             hasSD = (typeof controller.stations.stn_dis === "object") ? true : false;
@@ -3916,6 +4027,7 @@ function showHome(firstLoad) {
                     }
                     card.find(".station-settings").data({
                         um: hasMaster ? ((controller.stations.masop[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0) : undefined,
+                        um2: hasMaster2 ? ((controller.stations.masop2[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0) : undefined,
                         ir: hasIR ? ((controller.stations.ignore_rain[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0) : undefined,
                         ar: hasAR ? ((controller.stations.act_relay[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0) : undefined,
                         sd: hasSD ? ((controller.stations.stn_dis[parseInt(i/8)]&(1<<(i%8))) ? 1 : 0) : undefined,
@@ -3946,6 +4058,7 @@ function showHome(firstLoad) {
             reorderCards();
         },
         hasMaster = controller.options.mas ? true : false,
+        hasMaster2 = controller.options.mas2 ? true : false,
         hasIR = (typeof controller.stations.ignore_rain === "object") ? true : false,
         hasAR = (typeof controller.stations.act_relay === "object") ? true : false,
         hasSD = (typeof controller.stations.stn_dis === "object") ? true : false,
@@ -4061,7 +4174,18 @@ function showHome(firstLoad) {
 }
 
 function isStationMaster(sid) {
-    return (typeof controller.options.mas === "number" && controller.options.mas - 1 === sid);
+    var m1 = typeof controller.options.mas === "number" ? controller.options.mas : 0,
+        m2 = typeof controller.options.mas2 === "number" ? controller.options.mas2 : 0;
+
+    sid++;
+
+    if (m1 === sid) {
+        return 1;
+    } else if (m2 === sid) {
+        return 2;
+    } else {
+        return 0;
+    }
 }
 
 function isStationDisabled(sid) {
@@ -4467,7 +4591,7 @@ function get_runonce() {
                 }
 
                 var ele = $(b);
-                ele.val(data[a]).text(dhms2str(sec2dhms(data[a])));
+                ele.val(data[a]).text(getDurationText(data[a]));
                 if (data[a] > 0) {
                     ele.addClass("green");
                 } else {
@@ -4566,14 +4690,15 @@ function get_runonce() {
             title: name,
             callback: function(result){
                 dur.val(result);
-                dur.text(dhms2str(sec2dhms(result)));
+                dur.text(getDurationText(result));
                 if (result > 0) {
                     dur.addClass("green");
                 } else {
                     dur.removeClass("green");
                 }
             },
-            maximum: 65535
+            maximum: 65535,
+            showSun: checkOSVersion(214) ? true : false
         });
 
         return false;
@@ -4698,9 +4823,9 @@ function get_preview() {
                             }
                             if(prog[4][sid] && et_array[sid] === 0) {  // skip if water time is zero, or station is already scheduled
                                 if(prog[0]&0x02 && ((controller.options.uwt > 0 && simday === devday) || controller.options.uwt === 0)) {  // use weather scaling bit on
-                                    et_array[sid]=prog[4][sid] * controller.options.wl/100>>0;
+                                    et_array[sid]=getStationDuration(prog[4][sid],simt) * controller.options.wl/100>>0;
                                 } else {
-                                    et_array[sid]=prog[4][sid];
+                                    et_array[sid]=getStationDuration(prog[4][sid],simt);
                                 }
                                 if (et_array[sid] > 0) {  // after weather scaling, we maybe getting 0 water time
                                     pid_array[sid]=pid+1;
@@ -4815,17 +4940,36 @@ function get_preview() {
             if(pid_array[sid]) {
               if (is211) {
                 if(pl_array[sid]) {
-                    if (isStationMaster(sid) && (controller.stations.masop[sid>>3]&(1<<(sid%8)))) {
-                        preview_data.push({
-                            "start": (st_array[sid]+controller.options.mton),
-                            "end": (et_array[sid]+controller.options.mtof),
-                            "content":"",
-                            "className":"master",
-                            "shortname":"M",
-                            "group":"Master",
-                            "station": sid
-                        });
+                    var mas2 = typeof controller.options.mas2 !== "undefined" ? true : false,
+                        useMas1 = controller.stations.masop[sid>>3]&(1<<(sid%8)),
+                        useMas2 = mas2 ? controller.stations.masop2[sid>>3]&(1<<(sid%8)) : false;
+
+                    if (!isStationMaster(sid)) {
+                        if (controller.options.mas>0 && useMas1) {
+                            preview_data.push({
+                                "start": (st_array[sid]+controller.options.mton),
+                                "end": (et_array[sid]+controller.options.mtof),
+                                "content":"",
+                                "className":"master",
+                                "shortname":"M" + (mas2 ? "1" : ""),
+                                "group":"Master",
+                                "station": sid
+                            });
+                        }
+
+                        if (mas2 && controller.options.mas2>0 && useMas2) {
+                            preview_data.push({
+                                "start": (st_array[sid]+controller.options.mton2),
+                                "end": (et_array[sid]+controller.options.mtof2),
+                                "content":"",
+                                "className":"master",
+                                "shortname":"M2",
+                                "group":"Master 2",
+                                "station": sid
+                            });
+                        }
                     }
+
                     time_to_text(sid,st_array[sid],pid_array[sid],et_array[sid],simt);
                     pl_array[sid] = 0;
                     if(controller.stations.stn_seq[sid>>3]&(1<<(sid&0x07))) {
@@ -5052,10 +5196,22 @@ function get_preview() {
 
         preview_data.sort(sortByStation);
 
-        var shortnames = [];
+        var shortnames = [],
+            max = new Date(date[0],date[1]-1,date[2],24);
+
         $.each(preview_data, function(){
+            var total = this.start + this.end;
+
             this.start = new Date(date[0],date[1]-1,date[2],0,0,this.start);
-            this.end = new Date(date[0],date[1]-1,date[2],0,0,this.end);
+            if (total > 86400) {
+                var extraDays = Math.floor(this.end / 86400);
+
+                this.end = new Date(date[0],date[1]-1,parseInt(date[2])+extraDays,0,0,this.end % 86400);
+                max = max > this.end ? max : this.end;
+
+            } else {
+                this.end = new Date(date[0],date[1]-1,date[2],0,0,this.end);
+            }
             shortnames[this.group] = this.shortname;
         });
 
@@ -5066,7 +5222,7 @@ function get_preview() {
             "eventMargin": 10,
             "eventMarginAxis": 0,
             "min": new Date(date[0],date[1]-1,date[2],0),
-            "max": new Date(date[0],date[1]-1,date[2],24),
+            "max": max,
             "selectable": true,
             "showMajorLabels": false,
             "zoomMax": 1000 * 60 * 60 * 24,
@@ -5170,6 +5326,20 @@ function get_preview() {
 
     $("#preview").remove();
     $.mobile.pageContainer.append(page);
+}
+
+function getStationDuration(duration,date) {
+    if (checkOSVersion(214)) {
+        var sunTimes = getSunTimes(date);
+
+        if (duration === 65535) {
+            duration = (sunTimes[1] - sunTimes[0]) * 60;
+        } else if (duration === 65534) {
+            duration = ((sunTimes[0] + 1440) - sunTimes[1]) * 60;
+        }
+    }
+
+    return duration;
 }
 
 // Logging functions
@@ -6175,7 +6345,7 @@ function make_program21(n,isCopy) {
             list += "<div class='ui-field-contain duration-input"+(isStationDisabled(j) ? " station-hidden' style='display:none" : "")+"'><label for='station_"+j+"-"+id+"'>"+controller.stations.snames[j]+":</label><button disabled='true' data-mini='true' name='station_"+j+"-"+id+"' id='station_"+j+"-"+id+"' value='0'>Master</button></div>";
         } else {
             time = program.stations[j] || 0;
-            list += "<div class='ui-field-contain duration-input"+(isStationDisabled(j) ? " station-hidden' style='display:none" : "")+"'><label for='station_"+j+"-"+id+"'>"+controller.stations.snames[j]+":</label><button "+(time>0 ? "class='green' " : "")+"data-mini='true' name='station_"+j+"-"+id+"' id='station_"+j+"-"+id+"' value='"+time+"'>"+dhms2str(sec2dhms(time))+"</button></div>";
+            list += "<div class='ui-field-contain duration-input"+(isStationDisabled(j) ? " station-hidden' style='display:none" : "")+"'><label for='station_"+j+"-"+id+"'>"+controller.stations.snames[j]+":</label><button "+(time>0 ? "class='green' " : "")+"data-mini='true' name='station_"+j+"-"+id+"' id='station_"+j+"-"+id+"' value='"+time+"'>"+getDurationText(time)+"</button></div>";
         }
     }
 
@@ -6290,15 +6460,15 @@ function make_program21(n,isCopy) {
             seconds: dur.val(),
             title: name,
             callback: function(result){
-                dur.val(result);
-                dur.text(dhms2str(sec2dhms(result)));
-                if (result > 0) {
-                    dur.addClass("green");
-                } else {
+                dur.val(result).addClass("green");
+                dur.text(getDurationText(result));
+
+                if (result === 0) {
                     dur.removeClass("green");
                 }
             },
-            maximum: 65535
+            maximum: 65535,
+            showSun: checkOSVersion(214) ? true : false
         });
     });
 
@@ -6340,7 +6510,7 @@ function add_program(copyID) {
     });
 
     page.find("[id^='submit-']").on("click",function(){
-        submit_program(copyID);
+        submit_program("new");
         return false;
     });
 
@@ -6348,7 +6518,9 @@ function add_program(copyID) {
         page.remove();
     });
 
-    header.eq(2).prop("disabled",true);
+    if (typeof copyID === "string") {
+        header.eq(2).prop("disabled",true);
+    }
 
     $("#addprogram").remove();
     $.mobile.pageContainer.append(page);
@@ -6726,8 +6898,8 @@ function getImportMethod(localData){
 }
 
 function import_config(data) {
-    var piNames = {1:"tz",2:"ntp",12:"htp",13:"htp2",14:"ar",15:"nbrd",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtoff",21:"urs",22:"rst",23:"wl",25:"ipas",30:"rlp",36:"lg",31:"uwt"},
-        keyIndex = {"tz":1,"ntp":2,"dhcp":3,"hp0":12,"hp1":13,"ar":14,"ext":15,"seq":16,"sdt":17,"mas":18,"mton":19,"mtof":20,"urs":21,"rso":22,"wl":23,"ipas":25,"devid":26,"rlp":30,"lg":36,"uwt":31,"ntp1":32,"ntp2":33,"ntp3":34,"ntp4":35},
+    var piNames = {1:"tz",2:"ntp",12:"htp",13:"htp2",14:"ar",15:"nbrd",16:"seq",17:"sdt",18:"mas",19:"mton",20:"mtoff",21:"urs",22:"rst",23:"wl",25:"ipas",30:"rlp",36:"lg"},
+        keyIndex = {"tz":1,"ntp":2,"dhcp":3,"hp0":12,"hp1":13,"ar":14,"ext":15,"seq":16,"sdt":17,"mas":18,"mton":19,"mtof":20,"urs":21,"rso":22,"wl":23,"ipas":25,"devid":26,"rlp":30,"lg":36,"uwt":31,"ntp1":32,"ntp2":33,"ntp3":34,"ntp4":35,"mas2":37,"mton2":38,"mtof2":39},
         warning = "";
 
     if (typeof data !== "object" || !data.settings) {
@@ -6801,6 +6973,10 @@ function import_config(data) {
 
         for (i=0; i<data.stations.masop.length; i++) {
             cs += "&m"+i+"="+data.stations.masop[i];
+        }
+
+        for (i=0; i<data.stations.masop2.length; i++) {
+            cs += "&n"+i+"="+data.stations.masop2[i];
         }
 
         if (typeof data.stations.ignore_rain === "object") {
@@ -6955,7 +7131,7 @@ function show_about() {
                     "</li>" +
                 "</ul>" +
                 "<p class='smaller'>" +
-                    _("App Version")+": 1.4.1" +
+                    _("App Version")+": 1.4.2" +
                     (typeof controller.options.hwv !== "undefined" ? "<br>"+_("Hardware Version")+": "+getHWVersion() : "") +
                     "<br>"+_("Firmware")+": "+getOSVersion() +
                 "</p>" +
@@ -8046,13 +8222,25 @@ function showDurationBox(opt) {
             preventCompression: false,
             incrementalUpdate: true,
             showBack: true,
+            showSun: false,
             minimum: 0,
             callback: function(){}
-        };
+        },
+        type = 0;
 
     opt = $.extend({}, defaults, opt);
 
     $("#durationBox").popup("destroy").remove();
+
+    opt.seconds = parseInt(opt.seconds);
+
+    if (opt.seconds === 65535) {
+        type = 1;
+        opt.seconds = 0;
+    } else if (opt.seconds === 65534) {
+        type = 2;
+        opt.seconds = 0;
+    }
 
     var keys = ["days","hours","minutes","seconds"],
         text = [_("Days"),_("Hours"),_("Minutes"),_("Seconds")],
@@ -8062,8 +8250,6 @@ function showDurationBox(opt) {
         start = 0,
         arr = sec2dhms(opt.seconds),
         i;
-
-    opt.seconds = parseInt(opt.seconds);
 
     if (!opt.preventCompression && (checkOSVersion(210) && opt.maximum > 64800)) {
         opt.maximum = 64800;
@@ -8090,6 +8276,14 @@ function showDurationBox(opt) {
                 (opt.helptext ? "<p class='rain-desc center smaller'>"+opt.helptext+"</p>" : "") +
                 "<span>" +
                 "</span>" +
+                (opt.showSun ? "<div class='ui-grid-a useSun'>" +
+                    "<div class='ui-block-a'>" +
+                        "<button value='65534' class='ui-mini ui-btn rise "+(type === 2 ? "ui-btn-active" : "")+"'>"+_("Sunrise to Sunset")+"</button>" +
+                    "</div>" +
+                    "<div class='ui-block-b'>" +
+                        "<button value='65535' class='ui-mini ui-btn set "+(type === 1 ? "ui-btn-active" : "")+"'>"+_("Sunset to Sunrise")+"</button>" +
+                    "</div>" +
+                "</div>" : "") +
                 (opt.showBack ? "<button class='submit' data-theme='b'>"+_("Submit")+"</button>" : "") +
             "</div>" +
         "</div>"),
@@ -8143,12 +8337,18 @@ function showDurationBox(opt) {
             }
         },
         getValue = function() {
-            return dhms2sec({
-                "days": parseInt(popup.find(".days").val()) || 0,
-                "hours": parseInt(popup.find(".hours").val()) || 0,
-                "minutes": parseInt(popup.find(".minutes").val()) || 0,
-                "seconds": parseInt(popup.find(".seconds").val()) || 0
-            });
+            var useSun = popup.find(".useSun").find("button.ui-btn-active");
+
+            if (useSun.length === 1) {
+                return parseInt(useSun.val());
+            } else {
+                return dhms2sec({
+                    "days": parseInt(popup.find(".days").val()) || 0,
+                    "hours": parseInt(popup.find(".hours").val()) || 0,
+                    "minutes": parseInt(popup.find(".minutes").val()) || 0,
+                    "seconds": parseInt(popup.find(".seconds").val()) || 0
+                });
+            }
         },
         toggleInput = function(field,state) {
             popup.find("."+field).toggleClass("ui-state-disabled",state).prop("disabled",state).val(function(){
@@ -8215,8 +8415,34 @@ function showDurationBox(opt) {
         return false;
     });
 
+    if (opt.showSun) {
+        popup.find(".useSun").on("click","button",function(){
+            var button = $(this),
+                contraButton = popup.find(".useSun").find("button").not(button),
+                timeButtons = popup.find("span").find(".ui-btn,input");
+
+            contraButton.removeClass("ui-btn-active");
+            if (button.hasClass("ui-btn-active")) {
+                button.removeClass("ui-btn-active");
+                timeButtons.prop("disabled", false).removeClass("ui-disabled");
+            } else {
+                button.addClass("ui-btn-active");
+                timeButtons.prop("disabled", true).addClass("ui-disabled");
+            }
+
+            if (opt.incrementalUpdate) {
+                opt.callback(getValue());
+            }
+        });
+    }
+
     popup
     .css("max-width","350px")
+    .one("popupafteropen",function(){
+        if (type !== 0) {
+            popup.find("span").find(".ui-btn,input").prop("disabled", true).addClass("ui-disabled");
+        }
+    })
     .one("popupafterclose",function(){
         if (opt.incrementalUpdate) {
             opt.callback(getValue());
@@ -8940,6 +9166,16 @@ function parseIntArray(arr) {
     return arr;
 }
 
+function getDurationText(time) {
+    if (time === 65535) {
+        return _("Sunset to Sunrise");
+    } else if (time === 65534) {
+        return _("Sunrise to Sunset");
+    } else {
+        return dhms2str(sec2dhms(time));
+    }
+}
+
 // Convert seconds into (HH:)MM:SS format. HH is only reported if greater than 0.
 function sec2hms(diff) {
     var str = "";
@@ -9212,9 +9448,9 @@ function dateToString(date,toUTC,shorten) {
 
     if (currLang === "de") {
         if (shorten) {
-            return pad(date.getDate())+"."+pad(date.getMonth())+"."+date.getFullYear()+" "+pad(date.getHours())+":"+pad(date.getMinutes())+":"+pad(date.getSeconds());
+            return pad(date.getDate())+"."+pad(date.getMonth()+1)+"."+date.getFullYear()+" "+pad(date.getHours())+":"+pad(date.getMinutes())+":"+pad(date.getSeconds());
         } else {
-            return pad(date.getDate())+"."+pad(date.getMonth())+"."+date.getFullYear()+" "+pad(date.getHours())+":"+pad(date.getMinutes())+":"+pad(date.getSeconds());
+            return pad(date.getDate())+"."+pad(date.getMonth()+1)+"."+date.getFullYear()+" "+pad(date.getHours())+":"+pad(date.getMinutes())+":"+pad(date.getSeconds());
         }
     } else {
         if (shorten) {

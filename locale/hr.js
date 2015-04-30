@@ -235,7 +235,7 @@
       "Offset (minutes)" : "Ofset( minuta)",
       "Hardware Version" : "Hardware verzija",
       "Program Interval" : "Interval programa",
-      "Rain detected" : "Vlažno tlo",
+      "Rain detected" : "Vlažno tlo - kiša",
       "Weather adjustment uses Weather Underground data in conjunction with the selected method to adjust the watering percentage." : "Koristi Weather Underground podatke u vezi s odabranom metodom za podešavanje postotka navodnjavanja.",
       "Weekly" : "Tjedno",
       "Done" : "Učinjeno",

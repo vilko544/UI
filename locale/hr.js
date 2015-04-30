@@ -1,4 +1,4 @@
-{
+﻿{
    "messages" : {
       "Configure Master" : "Konfigurirajte master",
       "Use Sunset" : "Koristi zalazak sunca",
@@ -235,7 +235,7 @@
       "Offset (minutes)" : "Ofset( minuta)",
       "Hardware Version" : "Hardware verzija",
       "Program Interval" : "Interval programa",
-      "Rain detected" : "Detektirana  kiša",
+      "Rain detected" : "Vlažno tlo",
       "Weather adjustment uses Weather Underground data in conjunction with the selected method to adjust the watering percentage." : "Koristi Weather Underground podatke u vezi s odabranom metodom za podešavanje postotka navodnjavanja.",
       "Weekly" : "Tjedno",
       "Done" : "Učinjeno",

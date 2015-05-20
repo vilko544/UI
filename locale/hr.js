@@ -1,4 +1,4 @@
-{
+﻿{
    "messages" : {
       "Manage Sites" : "Upravljanje sajtovima",
       "Repeating" : "Ponavljanje",
@@ -126,7 +126,7 @@
       "Contrast" : "Kontrast",
       "NTP Sync" : "NTP sinkronizacija",
       "Weather Diagnostics" : "Diagnostika vremenske prognoze",
-      "Rain detected" : "Detektirana  kiša",
+      "Rain detected" : "Vlažno tlo - kiša",
       "Number of Stations" : "Broj stanica",
       "OpenSprinkler.com Login Expired" : "OpenSprinkler.com Login isteklo vrijeme",
       "delete" : "obrisati",
